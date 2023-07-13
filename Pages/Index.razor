@@ -1,0 +1,136 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@using Models
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
+@inject chat_app.Data.Chat Chat
+
+<style>
+    .chat-container {
+        height: 500px;
+        background-image: url('https://www.freepik.com/free-photos-vectors/chat-background-pattern');
+        background-size: cover;
+        background-repeat: no-repeat;
+    }
+
+    .chat-message-card {
+        width: 18rem;
+        margin: 0 5px;
+    }
+
+        .chat-message-card .card-header {
+            background-color: #f8f9fa;
+        }
+
+        .chat-message-card .list-group-item {
+            background-color: #fff;
+        }
+
+        .chat-message-card .card-footer {
+            background-color: #f8f9fa;
+        }
+
+    .chat-input-container {
+        margin-top: 20px;
+    }
+
+        .chat-input-container .form-control {
+            margin-right: 5px;
+        }
+</style>
+
+<div class="container chat-container overflow-auto shadow-sm p-3 mb-5 bg-white rounded">
+    @if (!userMessages.Any())
+    {
+        <p>No messages yet, start chatting!</p>
+    }
+
+    @foreach (var userMessage in userMessages)
+    {
+        <div class="row mb-3 d-flex @(userMessage.CurrentUser ? "justify-content-end" : "")">
+            <div class="card shadow chat-message-card @(userMessage.CurrentUser ? "color-green" : "")">
+                <div class="card-header">
+                    @(userMessage.CurrentUser ? "You" : userMessage.Username)
+                </div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item @(userMessage.CurrentUser ? "color-green" : "")">@userMessage.Message</li>
+                </ul>
+                <div class="card-footer">
+                    <span class="small">@userMessage.DateSent.ToString("HH:mm | MMM dd")</span>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<div class="container chat-input-container">
+    <div class="row">
+        <div class="col-3">
+            <input @bind="usernameInput" type="text" class="form-control" placeholder="Your name" readonly="@isUserReadonly" />
+        </div>
+        <div class="col-6">
+            <textarea @bind="messageInput" class="form-control" placeholder="Start typing..."></textarea>
+        </div>
+        <div class="col-3">
+            <button type="button" @onclick="Send" disabled="@(!IsConnected)" class="btn btn-primary">Send</button>
+        </div>
+    </div>
+</div>
+
+@code{
+    private HubConnection hubConnection;
+    private List<UserMessages> userMessages = new();
+    private string usernameInput;
+    private string messageInput;
+    private bool isUserReadonly = false;
+
+    public bool IsConnected => hubConnection.State == HubConnectionState.Connected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder().WithUrl(NavigationManager.ToAbsoluteUri("/chathub")).Build();
+
+        hubConnection.On<string, string>("ReceiveMessage", async (user, message) =>
+        {
+            await InvokeAsync(() =>
+            {
+                userMessages.Add(new UserMessages
+                    {
+                        Username = user,
+                        Message = message,
+                        CurrentUser = user == usernameInput,
+                        DateSent = DateTime.Now
+                    });
+            });
+
+            await InvokeAsync(StateHasChanged);
+        });
+        userMessages = await Chat.LoadChatHistory(usernameInput);
+        await hubConnection.StartAsync();
+    }
+
+    private async Task Send()
+    {
+        if (!string.IsNullOrEmpty(usernameInput) && !string.IsNullOrEmpty(messageInput))
+        {
+            await hubConnection.SendAsync("SendMessage", usernameInput, messageInput);
+
+            isUserReadonly = true;
+            messageInput = string.Empty;
+            await Chat.SaveChatMessage(new UserMessages
+                {
+                    Username = usernameInput,
+                    Message = messageInput,
+                    DateSent = DateTime.Now
+                });
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}
